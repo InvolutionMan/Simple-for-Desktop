@@ -405,7 +405,7 @@ private struct PostCard: View {
             Button(action: onLike) {
                 actionLabel(
                     icon: isLiked ? "heart.fill" : "heart",
-                    count: "\(post.voteCount)",
+                    count: post.voteCount > 0 ? "\(post.voteCount)" : "",
                     active: isLiked
                 )
             }
@@ -422,9 +422,11 @@ private struct PostCard: View {
             Image(systemName: icon)
                 .font(.system(size: 17, weight: .regular))
 
-            Text(count)
-                .font(.system(size: 12.5))
-                .monospacedDigit()
+            if !count.isEmpty {
+                Text(count)
+                    .font(.system(size: 12.5))
+                    .monospacedDigit()
+            }
         }
         .foregroundStyle(active ? Theme.tealDeep : Theme.muted)
         .contentShape(Rectangle())
@@ -659,7 +661,6 @@ private struct CommentsSheet: View {
     @ObservedObject var store: FollowingStore
 
     @Environment(\.dismiss) private var dismiss
-    @State private var liked: Set<String> = []
     @State private var expanded: Set<String> = []
     @State private var draft = ""
     @State private var replyTarget: FeedComment?
@@ -937,7 +938,7 @@ private struct CommentsSheet: View {
     }
 
     private func commentRow(_ comment: FeedComment) -> some View {
-        let isLiked = (comment.isVoted ?? false) != liked.contains(comment.id)
+        let isLiked = comment.isVoted ?? false
 
         return HStack(alignment: .top, spacing: 10) {
             commentAvatar(comment)
@@ -989,25 +990,13 @@ private struct CommentsSheet: View {
             .accessibilityLabel("回复这条评论")
 
             Button {
-                withAnimation(.easeOut(duration: 0.14)) {
-                    if liked.contains(comment.id) {
-                        liked.remove(comment.id)
-                    } else {
-                        liked.insert(comment.id)
-                    }
-                }
+                Task { await store.toggleCommentVote(comment, under: nil) }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isLiked ? "heart.fill" : "heart")
-                        .font(.system(size: 12.5, weight: .regular))
-
-                    Text("\(max(0, (comment.isVoted == true ? 1 : 0) + (isLiked ? 1 : 0)))")
-                        .font(.system(size: 11.5))
-                        .monospacedDigit()
-                }
-                .foregroundStyle(isLiked ? Theme.tealDeep : Theme.muted)
-                .frame(minWidth: 34, minHeight: 32)
-                .contentShape(Rectangle())
+                Image(systemName: isLiked ? "heart.fill" : "heart")
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(isLiked ? Theme.tealDeep : Theme.muted)
+                    .frame(minWidth: 34, minHeight: 32)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(isLiked ? "取消赞这条评论" : "赞这条评论")

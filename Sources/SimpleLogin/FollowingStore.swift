@@ -359,16 +359,61 @@ final class FollowingStore: ObservableObject {
         }
     }
 
+    /// 点赞是 POST /api/v3/votes，取消是 DELETE /api/v3/votes?post_id=。
+    /// 之前打的 /votes/posts 是只读端点，所以一直静默失败。
     func toggleVote(on post: FeedPost) async {
         guard let index = posts.firstIndex(where: { $0.id == post.id }) else { return }
         let original = posts[index]
-        posts[index] = original.withVoted(!(original.isVoted ?? false))
+        let target = !(original.isVoted ?? false)
+        posts[index] = original.withVoted(target)
         do {
             let token = try requireToken()
-            try await postJSON("api/v3/votes/posts", token: token, body: ["post_id": post.id])
+            if target {
+                try await postJSON("api/v3/votes", token: token, body: ["post_id": post.id])
+            } else {
+                try await deleteJSON("api/v3/votes?post_id=\(post.id)", token: token)
+            }
         } catch {
             posts[index] = original
             errorText = message(for: error)
+        }
+    }
+
+    /// 评论点赞：POST / DELETE /api/v3/comment_votes。
+    func toggleCommentVote(_ comment: FeedComment, under rootID: String?) async {
+        let target = !(comment.isVoted ?? false)
+
+        if let rootID {
+            guard var list = replies[rootID],
+                  let index = list.firstIndex(where: { $0.id == comment.id }) else { return }
+            let original = list[index]
+            list[index] = original.withVoted(target)
+            replies[rootID] = list
+            do {
+                try await voteComment(id: comment.id, liked: target)
+            } catch {
+                replies[rootID] = list.map { $0.id == original.id ? original : $0 }
+                errorText = message(for: error)
+            }
+        } else {
+            guard let index = comments.firstIndex(where: { $0.id == comment.id }) else { return }
+            let original = comments[index]
+            comments[index] = original.withVoted(target)
+            do {
+                try await voteComment(id: comment.id, liked: target)
+            } catch {
+                comments[index] = original
+                errorText = message(for: error)
+            }
+        }
+    }
+
+    private func voteComment(id: String, liked: Bool) async throws {
+        let token = try requireToken()
+        if liked {
+            try await postJSON("api/v3/comment_votes", token: token, body: ["comment_id": id])
+        } else {
+            try await deleteJSON("api/v3/comment_votes?comment_id=\(id)", token: token)
         }
     }
 
@@ -406,6 +451,11 @@ final class FollowingStore: ObservableObject {
         return data
     }
 
+    private func deleteJSON(_ path: String, token: String) async throws {
+        let (data, response) = try await URLSession.shared.data(for: request(path, method: "DELETE", token: token, body: nil))
+        try ensureSuccess(response, data)
+    }
+
     private func postJSON(_ path: String, token: String, body: [String: Any]) async throws {
         let (data, response) = try await URLSession.shared.data(for: request(path, method: "POST", token: token, body: body))
         try ensureSuccess(response, data)
@@ -428,6 +478,14 @@ final class FollowingStore: ObservableObject {
 }
 
 extension FeedComment {
+    func withVoted(_ voted: Bool) -> FeedComment {
+        FeedComment(
+            id: id, content: content, createdAt: createdAt,
+            isAuthor: isAuthor, isVoted: voted,
+            repliesCount: repliesCount, user: user
+        )
+    }
+
     func withRepliesCount(_ count: Int) -> FeedComment {
         FeedComment(
             id: id, content: content, createdAt: createdAt,

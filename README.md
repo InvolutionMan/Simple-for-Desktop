@@ -42,7 +42,8 @@
 | 发表评论 | `POST /api/v3/comments { post_id, content }` → 201 |
 | 回复评论 | `POST /api/v3/comments/replies { comment_id, content }` → 201 |
 | 删除评论 | `DELETE /api/v3/comments/<id>` |
-| 点赞 | `POST /api/v3/votes/posts` |
+| 点赞 | `POST /api/v3/votes { post_id }` / `DELETE /api/v3/votes?post_id=` |
+| 评论点赞 | `POST /api/v3/comment_votes { comment_id }` / `DELETE /api/v3/comment_votes?comment_id=` |
 | 当前用户 | `GET /api/v3/current_user` |
 
 图片走 `static-simple.imsummer.cn`，用 `AsyncImage` 加载，失败显示占位图标。
