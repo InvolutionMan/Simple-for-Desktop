@@ -50,6 +50,7 @@ struct FollowingView: View {
     @State private var showingPublishNotice = false
     @State private var searchText = ""
     @State private var commentingPost: FeedPost?
+    @State private var previewURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -66,6 +67,15 @@ struct FollowingView: View {
         }
         .sheet(item: $commentingPost) { post in
             CommentsSheet(post: post, store: store)
+        }
+        .overlay {
+            if let previewURL {
+                ImagePreview(url: previewURL) {
+                    withAnimation(.easeOut(duration: 0.16)) { self.previewURL = nil }
+                }
+                .transition(.opacity)
+                .zIndex(10)
+            }
         }
         .task(id: selectedTab) {
             await store.load(tab: selectedTab.storeTab)
@@ -186,7 +196,10 @@ struct FollowingView: View {
                     PostCard(
                         post: post,
                         onComment: { commentingPost = post },
-                        onLike: { Task { await store.toggleVote(on: post) } }
+                        onLike: { Task { await store.toggleVote(on: post) } },
+                        onTapImage: { url in
+                            withAnimation(.easeOut(duration: 0.16)) { previewURL = url }
+                        }
                     )
                     .frame(maxWidth: 620)
                     .frame(maxWidth: .infinity)
@@ -260,6 +273,7 @@ private struct PostCard: View {
     let post: FeedPost
     var onComment: () -> Void
     var onLike: () -> Void
+    var onTapImage: (URL) -> Void
 
     private var isLiked: Bool { post.isVoted ?? false }
 
@@ -313,7 +327,7 @@ private struct PostCard: View {
     private var avatar: some View {
         ZStack {
             Circle()
-                .fill(Theme.tealSoft)
+                .fill(post.user?.color ?? Theme.tealSoft)
                 .frame(width: 46, height: 46)
 
             if let url = post.user?.avatarURL.flatMap(URL.init(string:)) {
@@ -322,28 +336,36 @@ private struct PostCard: View {
                 } placeholder: {
                     Text(post.initial)
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.tealDeep)
+                        .foregroundStyle(Theme.ink)
                 }
                 .frame(width: 46, height: 46)
                 .clipShape(Circle())
             } else {
                 Text(post.initial)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.tealDeep)
+                    .foregroundStyle(Theme.ink)
             }
         }
         .accessibilityLabel("\(post.displayName)的头像")
     }
 
     private var photoGrid: some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-            spacing: 8
-        ) {
+        LazyVGrid(columns: gridColumns, spacing: 8) {
             ForEach(post.imageURLs, id: \.absoluteString) { url in
-                RemotePhoto(url: url)
+                RemotePhoto(url: url, aspect: post.imageURLs.count == 1 ? 4.0 / 3.0 : 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onTapImage(url) }
+                    .accessibilityAddTraits(.isButton)
+                    .help("查看大图")
             }
         }
+    }
+
+    /// 一张图占满整行，两张图并排，三张以上走九宫格。
+    private var gridColumns: [GridItem] {
+        let count = post.imageURLs.count
+        let columns = count == 1 ? 1 : (count == 2 ? 2 : 3)
+        return Array(repeating: GridItem(.flexible(), spacing: 8), count: columns)
     }
 
     private var actionBar: some View {
@@ -386,25 +408,111 @@ private struct PostCard: View {
     }
 }
 
-private struct RemotePhoto: View {
+private struct ImagePreview: View {
     let url: URL
+    let onClose: () -> Void
+
+    @State private var scale: CGFloat = 0.96
 
     var body: some View {
         ZStack {
+            Color.black.opacity(0.86)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: close)
+
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                case .failure:
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.system(size: 30))
+                        Text("图片加载失败").font(.system(size: 13))
+                    }
+                    .foregroundStyle(.white.opacity(0.85))
+                case .empty:
+                    ProgressView().controlSize(.large)
+                @unknown default:
+                    EmptyView()
+                }
+            }
+            .padding(.horizontal, 64)
+            .padding(.vertical, 56)
+            .scaleEffect(scale)
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(.white.opacity(0.16)))
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                    .help("关闭")
+                    .accessibilityLabel("关闭大图")
+                }
+                Spacer()
+            }
+            .padding(20)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.18)) { scale = 1 }
+        }
+    }
+
+    private func close() {
+        onClose()
+    }
+}
+
+private struct RemotePhoto: View {
+    let url: URL
+    var aspect: CGFloat = 1
+
+    var body: some View {
+        // 用 GeometryReader 兜住：图片自身尺寸不能参与布局，
+        // 否则 LazyVGrid 的分栏会被撑歪，右边缘还会溢出卡片。
+        GeometryReader { proxy in
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    placeholder
+                case .empty:
+                    ProgressView().controlSize(.small)
+                @unknown default:
+                    placeholder
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Theme.paper)
-
-            AsyncImage(url: url) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Image(systemName: "photo")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Theme.faint)
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityLabel("动态配图")
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "photo")
+            .font(.system(size: 16, weight: .regular))
+            .foregroundStyle(Theme.faint)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -654,7 +762,7 @@ private struct CommentsSheet: View {
     private func replyAvatar(_ reply: FeedComment) -> some View {
         ZStack {
             Circle()
-                .fill(Theme.tealSoft)
+                .fill(reply.user?.color ?? Theme.tealSoft)
                 .frame(width: 24, height: 24)
 
             if let url = reply.avatarURL {
@@ -775,7 +883,7 @@ private struct CommentsSheet: View {
     private func commentAvatar(_ comment: FeedComment) -> some View {
         ZStack {
             Circle()
-                .fill(Theme.tealSoft)
+                .fill(comment.user?.color ?? Theme.tealSoft)
                 .frame(width: 30, height: 30)
 
             if let url = comment.avatarURL {

@@ -14,6 +14,12 @@ struct FeedUser: Decodable, Hashable {
         case avatarURL = "avatar_url"
         case avatarColor = "avatar_color"
     }
+
+    /// 服务端会给一个 #RRGGBB 形式的底色，用它兜住没有头像的用户。
+    var color: Color? {
+        guard let avatarColor, let value = UInt32(avatarColor, radix: 16) else { return nil }
+        return Color(hex: value)
+    }
 }
 
 struct FeedMedia: Decodable, Hashable {
