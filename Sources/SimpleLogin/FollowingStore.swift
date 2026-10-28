@@ -25,6 +25,25 @@ struct FeedUser: Decodable, Hashable {
 struct FeedMedia: Decodable, Hashable {
     let url: String
     let type: String?
+    let thumbnailURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case url, type
+        case thumbnailURL = "thumbnail_url"
+    }
+}
+
+/// 卡片里按顺序渲染的一条媒体：图片或视频。
+enum FeedItem: Hashable, Identifiable {
+    case image(URL)
+    case video(url: URL, thumbnail: URL?)
+
+    var id: String {
+        switch self {
+        case .image(let url): return "img:" + url.absoluteString
+        case .video(let url, _): return "vid:" + url.absoluteString
+        }
+    }
 }
 
 struct FeedPost: Decodable, Identifiable, Hashable {
@@ -50,11 +69,19 @@ struct FeedPost: Decodable, Identifiable, Hashable {
     var displayName: String { user?.nickname ?? "匿名用户" }
     var initial: String { String(displayName.prefix(1)) }
     var timeText: String { RelativeTime.text(from: createdAt) }
-    var imageURLs: [URL] {
+    /// 图片与视频按服务端顺序排列，不能只挑图片，否则视频动态会整条空白。
+    var items: [FeedItem] {
         (media ?? []).compactMap { entry in
-            guard entry.type == nil || entry.type == "image" else { return nil }
-            return URL(string: entry.url)
+            guard let url = URL(string: entry.url) else { return nil }
+            if entry.type == "video" {
+                return .video(url: url, thumbnail: entry.thumbnailURL.flatMap(URL.init(string:)))
+            }
+            return .image(url)
         }
+    }
+
+    var imageURLs: [URL] {
+        items.compactMap { if case .image(let url) = $0 { return url } else { return nil } }
     }
 }
 

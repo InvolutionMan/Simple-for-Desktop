@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 
 private enum FollowingTab: String, CaseIterable, Identifiable {
@@ -51,6 +52,7 @@ struct FollowingView: View {
     @State private var searchText = ""
     @State private var commentingPost: FeedPost?
     @State private var previewURL: URL?
+    @State private var playingVideo: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -75,6 +77,13 @@ struct FollowingView: View {
                 }
                 .transition(.opacity)
                 .zIndex(10)
+            }
+
+            if let playingVideo {
+                VideoOverlay(url: playingVideo) {
+                    withAnimation(.easeOut(duration: 0.16)) { self.playingVideo = nil }
+                }
+                .zIndex(11)
             }
         }
         .task(id: selectedTab) {
@@ -199,6 +208,9 @@ struct FollowingView: View {
                         onLike: { Task { await store.toggleVote(on: post) } },
                         onTapImage: { url in
                             withAnimation(.easeOut(duration: 0.16)) { previewURL = url }
+                        },
+                        onTapVideo: { url in
+                            withAnimation(.easeOut(duration: 0.16)) { playingVideo = url }
                         }
                     )
                     .frame(maxWidth: 620)
@@ -274,6 +286,7 @@ private struct PostCard: View {
     var onComment: () -> Void
     var onLike: () -> Void
     var onTapImage: (URL) -> Void
+    var onTapVideo: (URL) -> Void
 
     private var isLiked: Bool { post.isVoted ?? false }
 
@@ -305,7 +318,7 @@ private struct PostCard: View {
                     .padding(.top, 14)
             }
 
-            if !post.imageURLs.isEmpty {
+            if !post.items.isEmpty {
                 photoGrid
                     .padding(.top, 14)
             }
@@ -351,19 +364,30 @@ private struct PostCard: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: gridColumns, spacing: 8) {
-            ForEach(post.imageURLs, id: \.absoluteString) { url in
-                RemotePhoto(url: url, aspect: post.imageURLs.count == 1 ? 4.0 / 3.0 : 1)
-                    .contentShape(Rectangle())
-                    .onTapGesture { onTapImage(url) }
-                    .accessibilityAddTraits(.isButton)
-                    .help("查看大图")
+            ForEach(post.items) { item in
+                switch item {
+                case .image(let url):
+                    RemotePhoto(url: url, aspect: singleAspect)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onTapImage(url) }
+                        .accessibilityAddTraits(.isButton)
+                        .help("查看大图")
+                case .video(let url, let thumbnail):
+                    VideoTile(thumbnail: thumbnail, aspect: singleAspect) {
+                        onTapVideo(url)
+                    }
+                }
             }
         }
     }
 
-    /// 一张图占满整行，两张图并排，三张以上走九宫格。
+    private var singleAspect: CGFloat {
+        post.items.count == 1 ? 16.0 / 9.0 : 1
+    }
+
+    /// 一张占满整行，两张并排，三张以上走九宫格。
     private var gridColumns: [GridItem] {
-        let count = post.imageURLs.count
+        let count = post.items.count
         let columns = count == 1 ? 1 : (count == 2 ? 2 : 3)
         return Array(repeating: GridItem(.flexible(), spacing: 8), count: columns)
     }
@@ -405,6 +429,118 @@ private struct PostCard: View {
         .foregroundStyle(active ? Theme.tealDeep : Theme.muted)
         .contentShape(Rectangle())
         .frame(maxWidth: .infinity, minHeight: 40)
+    }
+}
+
+private struct VideoTile: View {
+    let thumbnail: URL?
+    let aspect: CGFloat
+    let onTap: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.opacity(0.82)
+
+                if let thumbnail {
+                    AsyncImage(url: thumbnail) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else if phase.error != nil {
+                            Color.clear
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+                }
+
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 34, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.4), radius: 6)
+            }
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .accessibilityAddTraits(.isButton)
+        .help("播放视频")
+        .accessibilityLabel("播放视频")
+    }
+}
+
+/// SwiftUI 的 VideoPlayer 在 SPM 裸可执行文件里会因 Objective-C 元数据问题崩溃，
+/// 这里直接用 AVKit 的 AVPlayerView 包一层。
+private struct PlayerSurface: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .floating
+        view.videoGravity = .resizeAspect
+        view.allowsPictureInPicturePlayback = false
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        if nsView.player !== player { nsView.player = player }
+    }
+}
+
+private struct VideoOverlay: View {
+    let url: URL
+    let onClose: () -> Void
+
+    @State private var player: AVPlayer
+
+    init(url: URL, onClose: @escaping () -> Void) {
+        self.url = url
+        self.onClose = onClose
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.92)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: close)
+
+            PlayerSurface(player: player)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .padding(.horizontal, 56)
+                .padding(.vertical, 44)
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(.white.opacity(0.16)))
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                    .help("关闭")
+                    .accessibilityLabel("关闭视频")
+                }
+                Spacer()
+            }
+            .padding(20)
+        }
+        .onAppear { player.play() }
+        .onDisappear { player.pause() }
+    }
+
+    private func close() {
+        player.pause()
+        onClose()
     }
 }
 
