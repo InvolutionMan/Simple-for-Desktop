@@ -45,6 +45,9 @@
 | 点赞 | `POST /api/v3/votes { post_id }` / `DELETE /api/v3/votes?post_id=` |
 | 评论点赞 | `POST /api/v3/comment_votes { comment_id }` / `DELETE /api/v3/comment_votes?comment_id=` |
 | 当前用户 | `GET /api/v3/current_user` |
+| 夜市列表 | `GET /api/v3/night_markets?last_id=&per_page=10` |
+| 夜市开市状态 | `GET /api/v3/night_markets/banners` |
+| 进房 / 退房 | `POST /api/v3/voice_members { channel_id }` / `DELETE /api/v3/voice_members?channel_id=` |
 
 图片走 `static-simple.imsummer.cn`，用 `AsyncImage` 加载，失败显示占位图标。
 
@@ -58,3 +61,12 @@
 - 拼 URL 时不要用 `appendingPathComponent`，它会把 `?last_id=…` 转义进路径导致参数丢失——这里踩过。
 - `/api/v3/moments` 是「动态」流，对关注关系不返回内容，不要用它做关注页。
 - 工程以 Swift Package 形式提供，不含签名、App 图标与发布配置。
+
+## 夜市
+
+- 大厅列表走 `GET /api/v3/night_markets?last_id=&per_page=10`，游标翻页，实测 43 条。
+  两个坑：不带 `appVersionCode` 请求头时服务端只给 4 条（按 Web 端限流）；
+  `per_page` 上限是 10，超过会 400。
+- 进房用 `POST /api/v3/voice_members { channel_id }`（201），退房 `DELETE voice_members?channel_id=`。
+- **房间内的语音、文字消息、成员明细尚未接入**：语音需要声网 SDK；聊天与成员名单走环信
+  （`chat_room.im_id`），macOS 上要经 WKWebView 桥接环信 Web SDK，目前是本地演示数据。

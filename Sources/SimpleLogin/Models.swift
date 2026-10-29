@@ -32,6 +32,12 @@ struct Session: Equatable {
         return maskedPhone
     }
 
+    var avatarMark: String {
+        if let nickname, !nickname.isEmpty { return String(nickname.prefix(1)) }
+        let suffix = phone.suffix(2)
+        return suffix.isEmpty ? "·" : String(suffix)
+    }
+
     var initial: String {
         let source = (nickname?.isEmpty == false ? nickname! : phone)
         return String(source.prefix(1))
@@ -143,9 +149,15 @@ final class AuthModel: ObservableObject {
         guard let saved = SessionVault.load() else { return }
         guard let token = saved["token"] as? String, !token.isEmpty else { return }
 
-        let valid = (try? await api.validate(token: token)) ?? false
-        guard valid else {
-            SessionVault.clear()
+        // 只有服务端明确说令牌无效（401）才清空凭据；
+        // 网络错误保留，下次启动再试，否则断网一次就丢登录态。
+        do {
+            let valid = try await api.validate(token: token)
+            guard valid else {
+                SessionVault.clear()
+                return
+            }
+        } catch {
             return
         }
         let number = (saved["phone"] as? String) ?? ""
