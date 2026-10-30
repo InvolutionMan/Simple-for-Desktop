@@ -9,7 +9,11 @@ struct RoomMember: Identifiable, Hashable {
     var isHost: Bool { role == "creator_role" || role == "admin_role" }
 }
 
+@MainActor
 final class RoomStore: ObservableObject {
+
+    /// 环信桥：进房时连上该房间的群。
+    let im = IMBridge()
     @Published var activeChannel: NightChannel?
     @Published var messages: [RoomMessage] = []
     @Published var draft = ""
@@ -27,6 +31,7 @@ final class RoomStore: ObservableObject {
         activeChannel = channel
         members = []
         Task { await join(roomID: channel.roomID) }
+        if let group = channel.imID { im.connect(groupID: group) }
         startMembersPolling(roomID: channel.roomID)
         messages = []
         draft = ""

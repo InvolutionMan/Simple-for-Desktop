@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "SimpleLogin",
-            path: "Sources/SimpleLogin"
+            path: "Sources/SimpleLogin",
+            resources: [.copy("Resources/Easemob-chat.js")]
         )
     ]
 )
