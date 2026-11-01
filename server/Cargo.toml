@@ -1,0 +1,16 @@
+[package]
+name = "simple-web-server"
+version = "0.1.0"
+edition = "2021"
+description = "Simple 网页版后端：登录、动态、夜市与房间"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = 2
